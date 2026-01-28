@@ -41,6 +41,9 @@ jobs:
       - name: Run Button Running Order Script
         run: python running-order-button.py
 
+      - name: Run Lead Time Script
+        run: python lead_time.py
+
       - name: Send Telegram Notification
         if: success()
         run: |

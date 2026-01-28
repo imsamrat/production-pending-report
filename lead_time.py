@@ -17,7 +17,7 @@ _now = datetime.now()
 FROM_DATE = "2026-01-01 00:00:00"
 
 # FROM_DATE = (
-#     (_now - timedelta(days=30))
+#     (_now - timedelta(days=3))
 #     .replace(hour=0, minute=0, second=0, microsecond=0)
 #     .strftime("%Y-%m-%d %H:%M:%S")
 # )
@@ -29,21 +29,25 @@ ORDER_DOMAIN = [
     ("closing_date", "!=", False),
     ("closing_date", ">=", FROM_DATE),
     ("closing_date", "<=", TO_DATE),
-    ("company_id", "=", 1),
+    ("company_id", "in", [1, 3]),
 ]
 
 ORDER_FIELDS = [
     "oa_id",
     "date_order",
+    "closing_date",
     "company_id",
     "fg_categ_type",
     "fg_categ_group",
     "product_uom_qty",
+    "done_qty",
+    "lead_time",
     "partner_id",
     "buyer_name",
     "payment_term",
     "sale_order_line",
-    "closing_date",
+    "oa_total_balance",
+    "balance_qty",
 ]
 
 # ---------------- ODOO CONNECTION ----------------
@@ -55,31 +59,15 @@ if not uid:
 models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
 # ---------------- FETCH RECORDS ----------------
-# Fetch in batches to avoid Timeouts/ProtocolErrors
-records = []
-limit = 1000
-offset = 0
-
-print(f"🔄 Starting batched fetch from {MODEL_NAME}...")
-while True:
-    try:
-        batch = models.execute_kw(
-            ODOO_DB,
-            uid,
-            ODOO_API_KEY or ODOO_PASSWORD,
-            MODEL_NAME,
-            "search_read",
-            [ORDER_DOMAIN],
-            {"fields": ORDER_FIELDS, "limit": limit, "offset": offset},
-        )
-        if not batch:
-            break
-        records.extend(batch)
-        print(f"   Fetched {len(batch)} records (Total: {len(records)})")
-        offset += limit
-    except Exception as e:
-        print(f"❌ Error fetching batch at offset {offset}: {e}")
-        break
+records = models.execute_kw(
+    ODOO_DB,
+    uid,
+    ODOO_API_KEY or ODOO_PASSWORD,
+    MODEL_NAME,
+    "search_read",
+    [ORDER_DOMAIN],
+    {"fields": ORDER_FIELDS},
+)
 
 print(f"✅ {len(records)} records fetched from {MODEL_NAME}")
 
@@ -133,16 +121,17 @@ if oa_ids:
             "sale.order",
             "read",
             [oa_ids],
-            {"fields": ["order_ref"]},
+            {"fields": ["order_ref", "team_id"]},
         )
         for so in so_records:
             so_details[so["id"]] = {
                 "ref": safe_name(so.get("order_ref")),
+                "team": safe_name(so.get("team_id")),
             }
     except Exception as e:
         print(f"⚠️ Failed to fetch Sales Order details: {e}")
 
-# ---------------- FETCH SALE ORDER LINE DETAILS (Amount) ----------------
+# ---------------- FETCH SALE ORDER LINE DETAILS (Salesperson) ----------------
 sol_ids = []
 for rec in records:
     val = rec.get("sale_order_line")
@@ -153,7 +142,7 @@ sol_ids = list(set(sol_ids))
 sol_details = {}
 
 if sol_ids:
-    print(f"🔄 Fetching Amount details for {len(sol_ids)} Sales Order Lines...")
+    print(f"🔄 Fetching Salesperson details for {len(sol_ids)} Sales Order Lines...")
     try:
         sol_records = models.execute_kw(
             ODOO_DB,
@@ -162,10 +151,12 @@ if sol_ids:
             "sale.order.line",
             "read",
             [sol_ids],
-            {"fields": ["price_subtotal"]},
+            {"fields": ["salesman_id"]},
         )
         for sol in sol_records:
-            sol_details[sol["id"]] = sol.get("price_subtotal") or 0.0
+            sol_details[sol["id"]] = {
+                "salesperson": safe_name(sol.get("salesman_id")),
+            }
     except Exception as e:
         print(f"⚠️ Failed to fetch Sale Order Line details: {e}")
 
@@ -177,7 +168,12 @@ for rec in records:
     so_info = so_details.get(oa_id_val, {"ref": ""})
 
     sol_id_val = rec.get("sale_order_line")[0] if rec.get("sale_order_line") else None
-    amount_val = sol_details.get(sol_id_val, 0.0)
+    sol_data = sol_details.get(sol_id_val, {})
+    salesperson_val = sol_data.get("salesperson", "")
+
+    quantity_val = rec.get("product_uom_qty") or 0.0
+    done_qty_val = rec.get("done_qty") or 0.0
+    lead_time_val = rec.get("lead_time") or 0.0
 
     all_data.append(
         {
@@ -191,8 +187,11 @@ for rec in records:
             "company": safe_name(rec.get("company_id")),
             "item": safe_name(rec.get("fg_categ_type")),
             "item_group": safe_name(rec.get("fg_categ_group")),
-            "qty": rec.get("product_uom_qty") or 0,
-            "amount": amount_val,
+            "salesperson": salesperson_val,
+            "team": so_info.get("team", ""),
+            "quantity": quantity_val,
+            "Done Qty": done_qty_val,
+            "Lead Time": lead_time_val,
         }
     )
 
@@ -205,34 +204,17 @@ for col in date_columns:
     if col in df.columns:
         df[col] = pd.to_datetime(df[col], errors="coerce")
 
-# ---------------- GROUP DATA ----------------
+# ---------------- RAW DATA (NO GROUPING) ----------------
 if not df.empty:
-    # Fill NaN values for grouping columns to avoid data loss
-    df["oa"] = df["oa"].fillna("")
-    df["company"] = df["company"].fillna("")
+    # Keep row-level data; optional stable sort for readability
+    sort_cols = [c for c in ["closing_date", "oa_date", "oa"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(by=sort_cols, ascending=[True] * len(sort_cols))
 
-    # Truncate action_date to just the date (YYYY-MM-DD) to merge same-day records
-    df["oa_date"] = df["oa_date"].dt.date
-    df["closing_date"] = df["closing_date"].dt.date
-
-    # Group by all descriptive columns and sum qty
-    # Using as_index=False to keep the grouping columns
-    group_cols = [
-        "oa_date",
-        "closing_date",
-        "oa",
-        "PI",
-        "customer",
-        "buyer",
-        "payment_term",
-        "company",
-        "item",
-        "item_group",
-    ]
-    df = df.groupby(group_cols, as_index=False)[["qty", "amount"]].sum()
-
-    # Sort by oa_date ASC, then oa ASC
-    df = df.sort_values(by=["closing_date", "oa"], ascending=[True, True])
+    # Format dates as YYYY-MM-DD
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = df[col].dt.strftime("%Y-%m-%d")
 
 
 # ---------------- GOOGLE SHEETS SYNC ----------------
@@ -245,7 +227,7 @@ try:
     # Configuration
     GSHEETS_CREDS = "Credentials.json"
     SPREADSHEET_ID = "1F7epdshmtSM8iPmSgYTY9l7Hwsz4X0uuvShVi87s75o"
-    SHEET_NAME = "Zipper_Closed"
+    SHEET_NAME = "lead_time"
 
     # Authenticate
     scope = [
@@ -293,7 +275,7 @@ try:
     last_col_letter = col_to_letter(num_cols - 1)
 
     # Target row from user request
-    START_ROW = 8614
+    START_ROW = 73865
     target_range = f"A{START_ROW}:{last_col_letter}{START_ROW + num_rows}"
 
     print(f"Updating range {target_range} (Appended data)...")
