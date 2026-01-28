@@ -1,39 +1,50 @@
-name: Daily Otif Report
+name: Daily Production Pending Report
 
 on:
   schedule:
-    # 5:10 AM Dhaka Time (UTC+6) = 23:10 UTC Previous Day
-    - cron: '10 23 * * *'
-  workflow_dispatch:
+    # 5:10 AM Dhaka Time = 23:10 UTC (previous day)
+    - cron: "10 23 * * *"
+  workflow_dispatch: # Allow manual trigger
 
 jobs:
-  run-scripts:
+  run-script:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
 
-    - name: Create Credentials.json
-      run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > Credentials.json
+      - name: Create .env file
+        run: |
+          echo "ODOO_URL=${{ secrets.ODOO_URL }}" >> .env
+          echo "ODOO_DB=${{ secrets.ODOO_DB }}" >> .env
+          echo "ODOO_USERNAME=${{ secrets.ODOO_USERNAME }}" >> .env
+          echo "ODOO_PASSWORD=${{ secrets.ODOO_PASSWORD }}" >> .env
+          echo "ODOO_API_KEY=${{ secrets.ODOO_API_KEY }}" >> .env
 
-    - name: Run Scripts
-      env:
-        ODOO_URL: ${{ secrets.ODOO_URL }}
-        ODOO_DB: ${{ secrets.ODOO_DB }}
-        ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
-        ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
-        ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
-      run: |
-        python running-order-button.py
-        python running-order-zipper.py
+      - name: Create Credentials.json
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > Credentials.json
+
+      - name: Run Zipper Running Order Script
+        run: python running-order-zipper.py
+
+      - name: Run Button Running Order Script
+        run: python running-order-button.py
+
+      - name: Send Telegram Notification
+        if: success()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+          -d text="✅ *Daily Production Pending Report Success*%0ADaily Production Pending reports ran successfully on GitHub Actions." \
+          -d parse_mode="Markdown"
