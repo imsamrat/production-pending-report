@@ -43,6 +43,7 @@ ORDER_FIELDS = [
     "fg_categ_group",
     "product_uom_qty",
     "partner_id",
+    "buyer_id",
     "buyer_name",
     "payment_term",
     "sale_order_line",
@@ -108,6 +109,28 @@ def format_date(date_value):
     return str(date_value)
 
 
+# ---------------- FETCH BUYER BRAND GROUP ----------------
+buyer_ids = list(
+    set([rec.get("buyer_id")[0] for rec in records if rec.get("buyer_id")])
+)
+buyer_brands = {}
+if buyer_ids:
+    print(f"Fetching Brand Group for {len(buyer_ids)} buyers...")
+    try:
+        buyer_records = models.execute_kw(
+            ODOO_DB,
+            uid,
+            ODOO_API_KEY or ODOO_PASSWORD,
+            "res.partner",
+            "read",
+            [buyer_ids],
+            {"fields": ["brand"]},
+        )
+        for buyer in buyer_records:
+            buyer_brands[buyer["id"]] = safe_name(buyer.get("brand"))
+    except Exception as e:
+        print(f"Failed to fetch buyer Brand Group details: {e}")
+
 # ---------------- FETCH SALE ORDER DETAILS (PI) ----------------
 oa_ids = list(set([rec.get("oa_id")[0] for rec in records if rec.get("oa_id")]))
 so_details = {}
@@ -169,6 +192,7 @@ all_data = []
 for rec in records:
     oa_id_val = rec.get("oa_id")[0] if rec.get("oa_id") else None
     so_info = so_details.get(oa_id_val, {"ref": ""})
+    buyer_id_val = rec.get("buyer_id")[0] if rec.get("buyer_id") else None
     
     sol_id_val = rec.get("sale_order_line")[0] if rec.get("sale_order_line") else None
     sol_data = sol_details.get(sol_id_val, {})
@@ -192,6 +216,7 @@ for rec in records:
             "oa_date": format_date(rec.get("date_order")),
             "customer": safe_name(rec.get("partner_id")),
             "buyer": safe_name(rec.get("buyer_name")),
+            "brand": buyer_brands.get(buyer_id_val, ""),
             "payment_term": safe_name(rec.get("payment_term")),
             "company": safe_name(rec.get("company_id")),
             "item": safe_name(rec.get("fg_categ_type")),
@@ -232,6 +257,7 @@ if not df.empty:
         "PI",
         "customer",
         "buyer",
+        "brand",
         "payment_term",
         "company", 
         "item", 
