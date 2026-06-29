@@ -32,7 +32,7 @@ ORDER_DOMAIN = [
     ("oa_id", "!=", False),
     ("state", "not in", ("closed", "cancel", "hold")),
     ("company_id", "=", 3),
-    ("sale_order_line.state", "=", "sale")
+    ("sale_order_line.state", "=", "sale"),
 ]
 
 ORDER_FIELDS = [
@@ -160,7 +160,7 @@ for rec in records:
     val = rec.get("sale_order_line")
     if val and isinstance(val, list):
         sol_ids.append(val[0])
-        
+
 sol_ids = list(set(sol_ids))
 sol_details = {}
 
@@ -193,7 +193,7 @@ for rec in records:
     oa_id_val = rec.get("oa_id")[0] if rec.get("oa_id") else None
     so_info = so_details.get(oa_id_val, {"ref": ""})
     buyer_id_val = rec.get("buyer_id")[0] if rec.get("buyer_id") else None
-    
+
     sol_id_val = rec.get("sale_order_line")[0] if rec.get("sale_order_line") else None
     sol_data = sol_details.get(sol_id_val, {})
     amount_val = sol_data.get("amount", 0.0)
@@ -204,11 +204,11 @@ for rec in records:
     # Calculate Balance Qty and Pending Value
     # User requested 'balance_qty' specifically
     balance_qty_val = rec.get("balance_qty") or 0.0
-    
+
     # pending_value = (balance_qty * price) - discount %
     gross_pending_value = balance_qty_val * price_unit_val
     pending_value_val = gross_pending_value * (1 - (discount_val / 100))
-    
+
     all_data.append(
         {
             "oa": safe_name(rec.get("oa_id")),
@@ -248,25 +248,27 @@ if not df.empty:
 
     # Truncate action_date to just the date (YYYY-MM-DD) to merge same-day records
     df["oa_date"] = df["oa_date"].dt.date
-    
+
     # Group by all descriptive columns and sum qty
     # Using as_index=False to keep the grouping columns
     group_cols = [
-        "oa_date", 
-        "oa", 
+        "oa_date",
+        "oa",
         "PI",
         "customer",
         "buyer",
         "brand",
         "payment_term",
-        "company", 
-        "item", 
+        "company",
+        "item",
         "item_group",
         "salesperson",
         "team",
         "ID",
     ]
-    df = df.groupby(group_cols, as_index=False)[["qty", "amount", "balance_qty", "pending_value"]].sum()
+    df = df.groupby(group_cols, as_index=False)[
+        ["qty", "amount", "balance_qty", "pending_value"]
+    ].sum()
 
     # Sort by oa_date ASC, then oa ASC
     df = df.sort_values(by=["oa_date", "oa"], ascending=[True, True])
@@ -278,17 +280,20 @@ try:
     from google.oauth2.service_account import Credentials
 
     print("\n🚀 Starting Google Sheets Sync...")
-    
+
     # Configuration
-    GSHEETS_CREDS = 'Credentials.json'
-    SPREADSHEET_ID = '1F7epdshmtSM8iPmSgYTY9l7Hwsz4X0uuvShVi87s75o'
-    SHEET_NAME = 'Button'
-    
+    GSHEETS_CREDS = "Credentials.json"
+    SPREADSHEET_ID = "1F7epdshmtSM8iPmSgYTY9l7Hwsz4X0uuvShVi87s75o"
+    SHEET_NAME = "Button"
+
     # Authenticate
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
     creds = Credentials.from_service_account_file(GSHEETS_CREDS, scopes=scope)
     client = gspread.authorize(creds)
-    
+
     # Open Sheet
     sheet = client.open_by_key(SPREADSHEET_ID)
     try:
@@ -299,8 +304,8 @@ try:
 
     # Prepare Data
     # Replace NaN with empty string for JSON compliance
-    df_clean = df.fillna('')
-    
+    df_clean = df.fillna("")
+
     # Convert datetime objects to string for JSON compliance
     for col in date_columns:
         if col in df_clean.columns:
@@ -311,10 +316,10 @@ try:
     # headers = [df_clean.columns.values.tolist()] # No headers needed for appending
     values = df_clean.values.tolist()
     all_data_to_write = values
-    
+
     num_rows = len(all_data_to_write)
     num_cols = len(df_clean.columns) if not df_clean.empty else 0
-    
+
     # Calculate range, e.g., 'A34333:E...'
     # Function to convert col index to letter (0 -> A, 22 -> W)
     def col_to_letter(n):
@@ -325,21 +330,25 @@ try:
         return string
 
     last_col_letter = col_to_letter(num_cols - 1)
-    
+
     # Target row from user request
     START_ROW = 2
     target_range = f"A{START_ROW}:{last_col_letter}{START_ROW + num_rows}"
-    
+
     print(f"Updating range {target_range} (Appended data)...")
-    
+
     # Clear from START_ROW downwards to remove potential old data collision if needed
     # (Optional, but safe if we want to ensure "current month" replaces whatever was there from prev run)
     clear_range = f"A{START_ROW}:{last_col_letter}{worksheet.row_count}"
     worksheet.batch_clear([clear_range])
-    
+
     # Update with new data
-    worksheet.update(values=all_data_to_write, range_name=f"A{START_ROW}", value_input_option='USER_ENTERED')
-    
+    worksheet.update(
+        values=all_data_to_write,
+        range_name=f"A{START_ROW}",
+        value_input_option="USER_ENTERED",
+    )
+
     print("✅ Google Sheets update complete!")
 
 except ImportError:
