@@ -2,8 +2,8 @@ name: Daily Production Pending Report
 
 on:
   schedule:
-    # 5:10 AM Dhaka Time = 23:10 UTC (previous day)
-    - cron: "10 23 * * *"
+    # 5:17 AM Dhaka Time = 23:17 UTC (previous day)
+    - cron: "17 23 * * *"
   workflow_dispatch: # Allow manual trigger
 
 jobs:
